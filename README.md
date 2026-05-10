@@ -163,3 +163,40 @@ frontend/    Next.js + Google Maps JS + Turf
 ## 10. Honest note on “reasons”
 
 Safety tiers and bullet reasons are generated from **heuristic and demo placeholders** (speed/duration shape, seeded lighting/crowd language, and explicit “not live data” lines). They are meant for **UX transparency**, not verified incident or threat reporting. Replace with real datasets when available.
+
+---
+
+# 11. Current Functionality and Known Limitations
+
+## Automatic Location Detection
+
+SafeRoute supports automatic location detection when users allow browser location permissions. Once permission is granted, the application autofills the user's current location into the route input fields.
+
+### Current Behavior
+- Automatically detects the user's location
+- Autofills both the starting point and destination fields when permission is granted
+- Supports route transportation options including:
+  -  Walking
+  -  Driving
+  -  Public Transit / Bus
+
+### Known Limitations
+- The current implementation does not resolve the detected coordinates into a detailed address or place name like Google Maps.
+- Instead of displaying a readable location such as:
+  
+  ```text
+  1600 Amphitheatre Parkway, Mountain View, CA
+  ```
+
+  it currently fills the field using a generic "Current Location" value.
+
+- Both the starting point and destination fields may autofill simultaneously when location permissions are enabled, which can create usability issues during route selection.
+
+### Planned Improvements
+Future versions aim to:
+- Reverse geocode coordinates into real addresses and place names
+- Improve autofill behavior to only populate the starting location by default
+- Enhance the user experience to behave more similarly to Google Maps
+- Improve transportation mode selection and route recommendations
+
+---
