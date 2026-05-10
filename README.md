@@ -6,7 +6,7 @@ SafeRoute is a hackathon project: a **web app** (not a browser extension) that f
 
 | Layer | Choice |
 |--------|--------|
-| Map rendering | **Mapbox GL JS** (Next.js client) |
+| Map rendering | **Google Maps JavaScript API** (Next.js client) |
 | Routing / road geometry | **Google Maps Directions API** (`alternatives=true`) via Python |
 | Geospatial helpers | **Turf.js** on the frontend |
 | Frontend | **Next.js 14** (App Router, TypeScript, Tailwind) |
@@ -18,8 +18,11 @@ SafeRoute is a hackathon project: a **web app** (not a browser extension) that f
 
 - **Node.js 18+** and npm (for the frontend)
 - **Python 3.10+** (for the API)
-- **Mapbox** access token ([account.mapbox.com](https://account.mapbox.com/))
-- **Google Cloud** project with **Directions API** and **Geocoding API** enabled, and an API key
+- **Google Cloud** project with billing, and API keys with:
+  - **Backend:** Directions API + Geocoding API (server key; IP restriction recommended when deployed)
+  - **Frontend:** Maps JavaScript API (browser key; **HTTP referrer** restriction recommended: `http://localhost:3000/*`, plus your production origin)
+
+You can use **one** API key for both **only if** its restrictions work for both environments (often easier to use **two keys**: one referrer-restricted for the map, one IP-restricted for FastAPI).
 
 ## Setup
 
@@ -40,7 +43,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 cd frontend
 cp .env.local.example .env.local
-# Fill in NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN and NEXT_PUBLIC_API_URL (default http://localhost:8000)
+# Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY (Maps JavaScript API enabled)
+# and NEXT_PUBLIC_API_URL (default http://localhost:8000)
 npm install
 npm run dev
 ```
@@ -49,9 +53,9 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Secrets (do not commit tokens)
 
-- **Mapbox:** set `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` only in `frontend/.env.local` (gitignored). Do not paste `pk.…` into `.tsx` / `.ts` files or push tokens to GitHub.
-- **Google:** set `GOOGLE_MAPS_API_KEY` only in `backend/.env` (gitignored).
-- If a token was ever exposed in git history, **revoke/rotate** it in [Mapbox](https://account.mapbox.com/access-tokens/) or Google Cloud Credentials and create a new key.
+- **Browser map:** `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` only in `frontend/.env.local` (gitignored). Do not paste keys into source files or push them to GitHub.
+- **Backend:** `GOOGLE_MAPS_API_KEY` only in `backend/.env` (gitignored).
+- If a key was ever exposed in git history, **revoke** it in Google Cloud Credentials and create a new one.
 
 ## Product priorities (team roadmap)
 
@@ -69,7 +73,7 @@ This repo implements **multi-route safety coloring**, **route selection**, **ill
 
 ```
 backend/     FastAPI — geocode, directions, safety scoring
-frontend/    Next.js + Mapbox + Turf
+frontend/    Next.js + Google Maps JS + Turf
 ```
 
 ## Contributing (group workflow)

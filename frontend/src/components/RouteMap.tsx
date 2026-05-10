@@ -1,15 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import mapboxgl from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+import { Loader } from "@googlemaps/js-api-loader";
 import * as turf from "@turf/turf";
 import type { LatLng, RouteLeg } from "@/types/route";
-
-const ROUTES_SOURCE = "saferoute-routes";
-const ROUTES_LAYER = "saferoute-routes-line";
-const LIGHT_SOURCE = "saferoute-lighting";
-const LIGHT_LAYER = "saferoute-lighting-fill";
 
 function mulberry32(seed: number) {
   return function () {
@@ -41,9 +35,16 @@ function buildFakeLighting(
     if (rng() > 0.5) continue;
     const dist = ((i + rng()) / steps) * lenKm;
     const pt = turf.along(line, dist, { units: "kilometers" });
-    polys.push(turf.buffer(pt, 0.02 + rng() * 0.03, { units: "kilometers" }));
+    const buf = turf.buffer(pt, 0.02 + rng() * 0.03, { units: "kilometers" });
+    if (buf?.geometry?.type === "Polygon") {
+      polys.push(buf as GeoJSON.Feature<GeoJSON.Polygon>);
+    }
   }
   return turf.featureCollection(polys);
+}
+
+function lineStringToPath(line: GeoJSON.LineString): google.maps.LatLngLiteral[] {
+  return line.coordinates.map(([lng, lat]) => ({ lat, lng }));
 }
 
 type Props = {
@@ -55,205 +56,190 @@ type Props = {
 
 export default function RouteMap({ origin, destination, routes, selectedRouteId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
-  const [mapLoaded, setMapLoaded] = useState(false);
-  const [mapError, setMapError] = useState<string | null>(null);
-  const markersRef = useRef<{ o?: mapboxgl.Marker; d?: mapboxgl.Marker }>({});
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
+  const polygonsRef = useRef<google.maps.Polygon[]>([]);
+  const resizeDisposablesRef = useRef<{
+    observer?: ResizeObserver;
+    onResize?: () => void;
+  }>({});
 
-  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ?? "";
 
   useEffect(() => {
-    if (!token || !containerRef.current) return;
+    if (!apiKey || !containerRef.current) return;
 
+    let cancelled = false;
     setMapError(null);
-    mapboxgl.accessToken = token;
+
     const container = containerRef.current;
-    const map = new mapboxgl.Map({
-      container,
-      style: "mapbox://styles/mapbox/streets-v12",
-      center: [-79.3832, 43.6532],
-      zoom: 11,
-      attributionControl: true,
-    });
-    mapRef.current = map;
-
-    const resizeMap = () => {
-      try {
-        map.resize();
-      } catch {
-        /* ignore */
-      }
-    };
-
-    const onMapError = (e: { error?: Error }) => {
-      const msg = e.error?.message ?? "Map failed to load tiles or style.";
-      setMapError(msg);
-      console.error("[SafeRoute map]", e.error ?? e);
-    };
-
-    map.on("error", onMapError);
-
-    const rafResize = () => {
-      requestAnimationFrame(() => {
-        resizeMap();
-        requestAnimationFrame(resizeMap);
-      });
-    };
-
-    let resizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(() => rafResize());
-      resizeObserver.observe(container);
-    }
-
-    window.addEventListener("resize", resizeMap);
-
-    map.on("load", () => {
-      rafResize();
-      map.addSource(ROUTES_SOURCE, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      map.addLayer({
-        id: ROUTES_LAYER,
-        type: "line",
-        source: ROUTES_SOURCE,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": ["get", "color"],
-          "line-width": 5,
-          "line-opacity": 0.92,
-        },
-      });
-
-      map.addSource(LIGHT_SOURCE, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      map.addLayer(
-        {
-          id: LIGHT_LAYER,
-          type: "fill",
-          source: LIGHT_SOURCE,
-          paint: {
-            "fill-color": "#fde047",
-            "fill-opacity": 0.38,
-          },
-        },
-        ROUTES_LAYER,
-      );
-      setMapLoaded(true);
-      rafResize();
+    const loader = new Loader({
+      apiKey,
+      version: "weekly",
+      libraries: ["geometry"],
     });
 
-    rafResize();
+    loader
+      .load()
+      .then(() => {
+        if (cancelled || !containerRef.current) return;
+
+        const map = new google.maps.Map(containerRef.current, {
+          center: { lat: 43.6532, lng: -79.3832 },
+          zoom: 12,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: true,
+        });
+        mapRef.current = map;
+
+        const resize = () => {
+          google.maps.event.trigger(map, "resize");
+        };
+        const ro = new ResizeObserver(() => {
+          requestAnimationFrame(resize);
+        });
+        ro.observe(container);
+        window.addEventListener("resize", resize);
+        resizeDisposablesRef.current = { observer: ro, onResize: resize };
+        requestAnimationFrame(resize);
+
+        setMapReady(true);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Failed to load Google Maps.";
+          setMapError(msg);
+          console.error("[SafeRoute Google Maps]", err);
+        }
+      });
 
     return () => {
-      window.removeEventListener("resize", resizeMap);
-      resizeObserver?.disconnect();
-      map.off("error", onMapError);
-      markersRef.current.o?.remove();
-      markersRef.current.d?.remove();
-      markersRef.current = {};
-      map.remove();
+      cancelled = true;
+
+      resizeDisposablesRef.current.observer?.disconnect();
+      if (resizeDisposablesRef.current.onResize) {
+        window.removeEventListener("resize", resizeDisposablesRef.current.onResize);
+      }
+      resizeDisposablesRef.current = {};
+
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+      polylinesRef.current.forEach((p) => p.setMap(null));
+      polylinesRef.current = [];
+      polygonsRef.current.forEach((p) => p.setMap(null));
+      polygonsRef.current = [];
+
+      if (mapRef.current && typeof google !== "undefined" && google.maps?.event) {
+        google.maps.event.clearInstanceListeners(mapRef.current);
+      }
       mapRef.current = null;
-      setMapLoaded(false);
+      setMapReady(false);
       setMapError(null);
+      container.innerHTML = "";
     };
-  }, [token]);
+  }, [apiKey]);
 
   useEffect(() => {
-    if (!mapLoaded || !mapRef.current) return;
+    if (!mapReady || !mapRef.current) return;
     const map = mapRef.current;
 
-    const clear = () => {
-      markersRef.current.o?.remove();
-      markersRef.current.d?.remove();
-      markersRef.current = {};
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+
+    const mk = (pos: LatLng, label: string, fill: string) => {
+      const marker = new google.maps.Marker({
+        map,
+        position: { lat: pos.lat, lng: pos.lng },
+        label: { text: label, color: "#ffffff", fontSize: "12px", fontWeight: "700" },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 14,
+          fillColor: fill,
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+        },
+      });
+      markersRef.current.push(marker);
     };
 
-    clear();
-    if (origin) {
-      const el = document.createElement("div");
-      el.className =
-        "flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white shadow ring-2 ring-white";
-      el.textContent = "A";
-      markersRef.current.o = new mapboxgl.Marker({ element: el })
-        .setLngLat([origin.lng, origin.lat])
-        .addTo(map);
-    }
-    if (destination) {
-      const el = document.createElement("div");
-      el.className =
-        "flex h-8 w-8 items-center justify-center rounded-full bg-rose-600 text-xs font-bold text-white shadow ring-2 ring-white";
-      el.textContent = "B";
-      markersRef.current.d = new mapboxgl.Marker({ element: el })
-        .setLngLat([destination.lng, destination.lat])
-        .addTo(map);
-    }
-
-    return clear;
-  }, [mapLoaded, origin, destination]);
+    if (origin) mk(origin, "A", "#059669");
+    if (destination) mk(destination, "B", "#e11d48");
+  }, [mapReady, origin, destination]);
 
   useEffect(() => {
-    if (!mapLoaded || !mapRef.current) return;
+    if (!mapReady || !mapRef.current) return;
     const map = mapRef.current;
-    const routeSrc = map.getSource(ROUTES_SOURCE) as mapboxgl.GeoJSONSource | undefined;
-    const lightSrc = map.getSource(LIGHT_SOURCE) as mapboxgl.GeoJSONSource | undefined;
-    if (!routeSrc || !lightSrc) return;
+
+    polylinesRef.current.forEach((p) => p.setMap(null));
+    polylinesRef.current = [];
+    polygonsRef.current.forEach((p) => p.setMap(null));
+    polygonsRef.current = [];
 
     const visible = selectedRouteId
       ? routes.filter((r) => r.id === selectedRouteId)
       : routes;
 
-    const routeFeatures: GeoJSON.Feature<GeoJSON.LineString>[] = visible.map((r) => ({
-      type: "Feature",
-      properties: { id: r.id, color: r.color },
-      geometry: r.geometry,
-    }));
+    const bounds = new google.maps.LatLngBounds();
 
-    routeSrc.setData({ type: "FeatureCollection", features: routeFeatures });
+    visible.forEach((r) => {
+      const path = lineStringToPath(r.geometry);
+      path.forEach((pt) => bounds.extend(pt));
+      const poly = new google.maps.Polyline({
+        path,
+        geodesic: true,
+        strokeColor: r.color,
+        strokeOpacity: 0.95,
+        strokeWeight: 5,
+        map,
+      });
+      polylinesRef.current.push(poly);
+    });
 
     if (selectedRouteId) {
-      const chosen = routes.find((r) => r.id === selectedRouteId);
+      const chosen = routes.find((x) => x.id === selectedRouteId);
       if (chosen) {
         const line = turf.lineString(chosen.geometry.coordinates);
-        lightSrc.setData(buildFakeLighting(line, selectedRouteId));
-        const bbox = turf.bbox(line);
-        map.fitBounds(
-          [
-            [bbox[0], bbox[1]],
-            [bbox[2], bbox[3]],
-          ],
-          { padding: 88, maxZoom: 14, duration: 650 },
-        );
-      } else {
-        lightSrc.setData({ type: "FeatureCollection", features: [] });
-      }
-    } else {
-      lightSrc.setData({ type: "FeatureCollection", features: [] });
-      if (routeFeatures.length) {
-        const fc = turf.featureCollection(routeFeatures);
-        const bbox = turf.bbox(fc);
-        map.fitBounds(
-          [
-            [bbox[0], bbox[1]],
-            [bbox[2], bbox[3]],
-          ],
-          { padding: 72, maxZoom: 13, duration: 550 },
-        );
+        const fc = buildFakeLighting(line, selectedRouteId);
+        fc.features.forEach((f) => {
+          if (f.geometry.type !== "Polygon") return;
+          const rings = f.geometry.coordinates.map((ring) =>
+            ring.map(([lng, lat]) => ({ lat, lng })),
+          );
+          const poly = new google.maps.Polygon({
+            paths: rings,
+            strokeColor: "#ca8a04",
+            strokeOpacity: 0.35,
+            strokeWeight: 0,
+            fillColor: "#fde047",
+            fillOpacity: 0.35,
+            map,
+          });
+          polygonsRef.current.push(poly);
+        });
       }
     }
-  }, [mapLoaded, routes, selectedRouteId]);
 
-  if (!token) {
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, { top: 72, right: 72, bottom: 72, left: 72 });
+    }
+  }, [mapReady, routes, selectedRouteId]);
+
+  if (!apiKey) {
     return (
       <div className="flex h-full min-h-[320px] items-center justify-center bg-slate-900 p-6 text-center text-sm text-amber-100">
         Add{" "}
         <code className="mx-1 rounded bg-slate-800 px-1.5 py-0.5 text-amber-50">
-          NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
+          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
         </code>{" "}
-        to <code className="mx-1 rounded bg-slate-800 px-1.5 py-0.5">frontend/.env.local</code>.
+        to <code className="mx-1 rounded bg-slate-800 px-1.5 py-0.5">frontend/.env.local</code> and
+        enable <strong className="text-amber-50">Maps JavaScript API</strong> for that key in Google
+        Cloud.
       </div>
     );
   }
@@ -262,12 +248,12 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId 
     <div className="relative h-full min-h-[280px] w-full flex-1 md:min-h-0">
       {mapError ? (
         <div className="absolute left-2 right-2 top-2 z-10 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 shadow-sm">
-          <div className="font-semibold">Map could not load tiles</div>
+          <div className="font-semibold">Google Maps did not load</div>
           <p className="mt-1 leading-snug">
-            {mapError} — If you use a restricted Mapbox token, add{" "}
-            <code className="rounded bg-red-100 px-1">http://localhost:3000</code> (and{" "}
-            <code className="rounded bg-red-100 px-1">http://127.0.0.1:3000</code>) under URL
-            restrictions, then restart <code className="rounded bg-red-100 px-1">npm run dev</code>.
+            {mapError} — Enable <strong>Maps JavaScript API</strong> for this key. If the key uses
+            HTTP referrer restrictions, allow <code className="rounded bg-red-100 px-1">http://localhost:3000/*</code>{" "}
+            (and your production origin). Restart <code className="rounded bg-red-100 px-1">npm run dev</code> after
+            changing <code className="rounded bg-red-100 px-1">.env.local</code>.
           </p>
         </div>
       ) : null}
