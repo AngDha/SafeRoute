@@ -1,4 +1,4 @@
-# SafeRoute Website Documentation
+# SafeRoute 
 
 SafeRoute is a web-based hackathon tool designed to determine walking and driving routes based on safety rather than the fastest time. Multiple possible routes are presented from the user’s starting point to the selected destination and colour-coded according to safety level:
 
