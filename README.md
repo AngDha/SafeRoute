@@ -51,12 +51,6 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Secrets (do not commit tokens)
-
-- **Browser map:** `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` only in `frontend/.env.local` (gitignored). Do not paste keys into source files or push them to GitHub.
-- **Backend:** `GOOGLE_MAPS_API_KEY` only in `backend/.env` (gitignored).
-- If a key was ever exposed in git history, **revoke** it in Google Cloud Credentials and create a new one.
-
 ## Product priorities (team roadmap)
 
 1. Safety (primary)  
@@ -75,8 +69,3 @@ This repo implements **multi-route safety coloring**, **route selection**, **ill
 backend/     FastAPI — geocode, directions, safety scoring
 frontend/    Next.js + Google Maps JS + Turf
 ```
-
-## Contributing (group workflow)
-
-1. Branch from `main`, open PRs, or coordinate pushes to `main` as your team prefers.  
-2. Never commit real `.env` / `.env.local` files; use the `*.example` templates only.
