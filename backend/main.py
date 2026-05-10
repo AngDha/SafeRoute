@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import os
 import time
-from typing import Any, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 import httpx
 import polyline
@@ -40,8 +40,8 @@ class LatLng(BaseModel):
 
 
 class GeocodeRequest(BaseModel):
-    address: str | None = None
-    place_id: str | None = None
+    address: Optional[str] = None
+    place_id: Optional[str] = None
 
     @model_validator(mode="after")
     def require_address_or_place(self) -> "GeocodeRequest":
@@ -76,7 +76,7 @@ def _evaluate_route_safety(
     encoded_polyline: str,
     duration_s: float,
     distance_m: float,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """
     Heuristic 0–100 (higher = safer) plus human-readable reasons tied to the same proxies.
     """
@@ -101,7 +101,7 @@ def _evaluate_route_safety(
     else:
         tier = "dangerous"
 
-    reasons: list[str] = []
+    reasons: List[str] = []
 
     if distance_m > 0:
         if km_h > 80:
@@ -169,15 +169,15 @@ def _evaluate_route_safety(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/api/places/autocomplete")
 async def places_autocomplete(
     q: str = Query("", alias="input", min_length=0),
-    sessiontoken: str | None = Query(None),
-) -> dict[str, Any]:
+    sessiontoken: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
     """Google Places Autocomplete (legacy) — enable Places API on the same server key."""
     key = _require_google_key()
     q = q.strip()
@@ -185,7 +185,7 @@ async def places_autocomplete(
         return {"predictions": []}
 
     url = "https://maps.googleapis.com/maps/api/place/autocomplete/json"
-    params: dict[str, str] = {"input": q, "key": key}
+    params: Dict[str, str] = {"input": q, "key": key}
     if sessiontoken:
         params["sessiontoken"] = sessiontoken
 
@@ -213,10 +213,10 @@ async def places_autocomplete(
 
 
 @app.post("/api/geocode")
-async def geocode(body: GeocodeRequest) -> dict[str, Any]:
+async def geocode(body: GeocodeRequest) -> Dict[str, Any]:
     key = _require_google_key()
     url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params: dict[str, str] = {"key": key}
+    params: Dict[str, str] = {"key": key}
     if body.place_id and body.place_id.strip():
         params["place_id"] = body.place_id.strip()
     else:
@@ -241,12 +241,12 @@ async def geocode(body: GeocodeRequest) -> dict[str, Any]:
 
 
 @app.post("/api/routes")
-async def routes(body: RoutesRequest) -> dict[str, Any]:
+async def routes(body: RoutesRequest) -> Dict[str, Any]:
     key = _require_google_key()
     origin = f"{body.origin.lat},{body.origin.lng}"
     destination = f"{body.destination.lat},{body.destination.lng}"
     url = "https://maps.googleapis.com/maps/api/directions/json"
-    params: dict[str, str] = {
+    params: Dict[str, str] = {
         "origin": origin,
         "destination": destination,
         "alternatives": "true",
@@ -269,7 +269,7 @@ async def routes(body: RoutesRequest) -> dict[str, Any]:
             detail=data.get("error_message") or status or "Directions failed",
         )
 
-    out_routes: list[dict[str, Any]] = []
+    out_routes: List[Dict[str, Any]] = []
     for idx, leg in enumerate(data.get("routes", [])):
         enc = leg.get("overview_polyline", {}).get("points")
         if not enc:
@@ -309,7 +309,7 @@ async def routes(body: RoutesRequest) -> dict[str, Any]:
 
 
 @app.post("/api/routes/{route_id}/safety")
-async def route_safety_refresh(route_id: str, body: RoutesRequest) -> dict[str, Any]:
+async def route_safety_refresh(route_id: str, body: RoutesRequest) -> Dict[str, Any]:
     bundle = await routes(body)
     for rt in bundle["routes"]:
         if rt["id"] == route_id:
