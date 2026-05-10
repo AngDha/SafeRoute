@@ -47,6 +47,12 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Secrets (do not commit tokens)
+
+- **Mapbox:** set `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` only in `frontend/.env.local` (gitignored). Do not paste `pk.…` into `.tsx` / `.ts` files or push tokens to GitHub.
+- **Google:** set `GOOGLE_MAPS_API_KEY` only in `backend/.env` (gitignored).
+- If a token was ever exposed in git history, **revoke/rotate** it in [Mapbox](https://account.mapbox.com/access-tokens/) or Google Cloud Credentials and create a new key.
+
 ## Product priorities (team roadmap)
 
 1. Safety (primary)  

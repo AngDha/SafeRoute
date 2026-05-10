@@ -189,19 +189,32 @@ export default function HomeClient() {
               </ul>
 
               {selectedRouteId ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-                  <div className="font-medium">Selected route</div>
-                  <p className="mt-1 text-amber-900/90">
-                    Other paths are hidden. Street lighting is illustrative where open data is
-                    unavailable. Safety score refreshes every ~8s while this route is selected.
-                  </p>
-                  <button
-                    type="button"
-                    className="mt-2 text-xs font-semibold text-amber-900 underline"
-                    onClick={() => setSelectedRouteId(null)}
-                  >
-                    Show all routes again
-                  </button>
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="min-w-0 flex-1 leading-snug">
+                      <span className="font-semibold">Single-route view.</span>{" "}
+                      <span className="text-amber-900/90">
+                        Other paths are hidden. Safety still refreshes ~every 8s.
+                      </span>
+                    </p>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md bg-amber-200/80 px-2 py-1 text-[11px] font-semibold text-amber-950 hover:bg-amber-200"
+                      onClick={() => setSelectedRouteId(null)}
+                    >
+                      Show all routes
+                    </button>
+                  </div>
+                  <details className="mt-2 text-[11px] text-amber-900/85">
+                    <summary className="cursor-pointer select-none font-medium text-amber-900 hover:underline">
+                      Why lighting looks like this
+                    </summary>
+                    <p className="mt-1.5 leading-relaxed">
+                      Street lighting along the path is <strong>illustrative</strong> until we plug in
+                      real lighting or street-lamp datasets. It is seeded from your route so it stays
+                      stable for the demo.
+                    </p>
+                  </details>
                 </div>
               ) : (
                 <p className="text-xs text-slate-500">
