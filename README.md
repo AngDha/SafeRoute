@@ -1,37 +1,38 @@
-# SafeRoute 
+# SafeRoute
 
 SafeRoute is a web-based hackathon tool designed to determine walking and driving routes based on safety rather than the fastest time. Multiple possible routes are presented from the user’s starting point to the selected destination and colour-coded according to safety level:
 
-- 🟢 Green = Safest
-- 🟡 Yellow = Moderately Safe
-- 🔴 Red = Least Safe
+- Green = safest
+- Yellow = moderately safe
+- Red = higher risk in our demo model
 
 This allows users to make more informed travel decisions based on route safety.
 
 ---
 
-# 1. Project Overview
+## 1. Project overview
 
 - SafeRoute prioritizes safety during navigation by analyzing different route alternatives.
 - Users can visually compare route safety levels before selecting a path.
 - The application highlights illustrative lighting information and periodically refreshes route safety data.
+- **Places-style autocomplete** (Google Places), **“Here”** buttons for **current location** on A and B, **travel modes** (driving, walking, transit, cycling), and **“Why this rating?”** explanations for each route.
 - The project was built as a website rather than a browser extension to simplify deployment and maximize UI flexibility during the hackathon.
 
 ---
 
-# 2. Technology Stack
+## 2. Technology stack
 
 | Layer | Technology |
-|---|---|
-| Map Rendering | Google Maps JavaScript API |
-| Routing / Road Geometry | Google Maps Directions API via Python |
-| Geospatial Helpers | Turf.js |
+| --- | --- |
+| Map rendering | Google Maps JavaScript API |
+| Routing / road geometry | Google Maps Directions API via Python |
+| Geospatial helpers | Turf.js |
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Backend | Python, FastAPI |
 
 ---
 
-# 3. Key Features
+## 3. Key features
 
 - Multiple route alternatives displayed simultaneously
 - Safety-based colour coding for routes
@@ -40,160 +41,125 @@ This allows users to make more informed travel decisions based on route safety.
 - Periodic safety refresh updates
 - Modern responsive user interface
 - Real-time map interaction using Google Maps
+- Autocomplete search for start and destination
+- Travel mode: driving, walking, transit (optional bus preference), cycling
+- Plain-language reasons for each route’s tier (demo model — see disclaimer in the app)
 
 ---
 
-# 4. System Architecture
+## 4. System architecture
 
-## Frontend
+### Frontend
+
 The Next.js frontend renders Google Maps and communicates with backend APIs.
 
-## Backend
-The FastAPI backend processes:
-- Route requests
-- Geocoding
-- Safety scoring
+### Backend
 
-## External APIs
-Google Maps APIs provide:
-- Route alternatives
-- Road geometry
-- Geolocation services
+The FastAPI backend processes:
+
+- Route requests (including travel mode and optional transit bus bias)
+- Geocoding (address or `place_id` from autocomplete)
+- Places autocomplete (proxied with your server key)
+- Safety scoring and human-readable reason strings
+
+### External APIs (Google Cloud)
+
+Enable on the keys you use:
+
+- **Backend key:** Directions API, Geocoding API, **Places API** (Place Autocomplete)
+- **Browser key:** Maps JavaScript API (HTTP referrer restrictions for `localhost` and production)
+
+You may use one key for both only if your restriction model allows it; often teams use two keys (server vs browser).
 
 ---
 
-# 5. Prerequisites
-
-Before running the project, ensure you have:
+## 5. Prerequisites
 
 - Node.js 18+ and npm
 - Python 3.10+
 - Google Cloud project with billing enabled
-- Google Maps API keys
-- Directions API enabled
-- Geocoding API enabled
-- Maps JavaScript API enabled
+- APIs enabled as listed above
 
 ---
 
-# 6. Installation and Setup
+## 6. Installation and setup
 
-## Backend Setup
+### Backend
 
 ```bash
 cd backend
-
 python3 -m venv .venv
-
-# Activate virtual environment
-# Linux / macOS
-source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate
-
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
 cp .env.example .env
 ```
 
-Add your Google Maps API key to `.env`:
+Add your **server** Google API key to `backend/.env`:
 
 ```env
 GOOGLE_MAPS_API_KEY=your_api_key
 ```
 
-Run the backend server:
+Run the backend:
 
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
----
-
-## Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
-
 cp .env.local.example .env.local
 ```
 
-Add the following environment variables:
+Add to `frontend/.env.local`:
 
 ```env
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_api_key
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_browser_key
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-Install dependencies and start the development server:
-
 ```bash
 npm install
-
 npm run dev
 ```
 
-Open:
+Open `http://localhost:3000`.
+
+---
+
+## 7. Secrets (do not commit tokens)
+
+- Put keys only in `backend/.env` and `frontend/.env.local` (both gitignored).
+- Do not paste keys into source files or push them to GitHub.
+- If a key was ever exposed, revoke it in Google Cloud and create a new one.
+
+---
+
+## 8. Product priorities and roadmap
+
+1. Safety-first navigation  
+2. Fastest reasonable routes  
+3. Road quality assessment  
+4. Lighting analysis  
+5. Road population density  
+6. Eco-friendly routing  
+7. Urban help-ready areas  
+
+Future improvements: real crime/incident feeds, verified street lighting, crowd density, richer transit preferences, mobile apps.
+
+---
+
+## 9. Repository structure
 
 ```text
-http://localhost:3000
+backend/     FastAPI — geocode, place autocomplete, directions, safety scoring
+frontend/    Next.js + Google Maps JS + Turf
 ```
 
 ---
 
-# 7. Product Priorities and Roadmap
+## 10. Honest note on “reasons”
 
-- Safety-first navigation
-- Fastest reasonable routes
-- Road quality assessment
-- Lighting analysis
-- Road population density
-- Eco-friendly routing
-- Urban help-ready areas
-
----
-
-# 8. Repository Structure
-
-```text
-backend/
-│
-├── FastAPI backend handling:
-│   ├── Geocoding
-│   ├── Routing
-│   └── Safety scoring
-
-frontend/
-│
-├── Next.js frontend handling:
-│   ├── Google Maps integration
-│   ├── UI rendering
-│   └── Turf.js geospatial processing
-```
-
----
-
-# 9. Future Improvements
-
-- Integration with real crime and incident datasets
-- Real lighting infrastructure data
-- Crowd density analytics
-- AI-based safety prediction
-- Mobile app deployment
-- User-reported safety incidents
-
----
-
-# 10. Conclusion
-
-SafeRoute demonstrates how modern web technologies and geospatial APIs can be combined to create a safer navigation experience. The project successfully showcases:
-
-- Route safety visualization
-- Multi-route comparisons
-- Interactive mapping
-- Scalable architecture for future expansion
-
-The project provides a strong foundation for integrating real-world safety and urban analytics datasets in future versions.
-
----
+Safety tiers and bullet reasons are generated from **heuristic and demo placeholders** (speed/duration shape, seeded lighting/crowd language, and explicit “not live data” lines). They are meant for **UX transparency**, not verified incident or threat reporting. Replace with real datasets when available.

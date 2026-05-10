@@ -1,6 +1,6 @@
 """
-SafeRoute API: Google Directions (alternatives) + geocoding + safety scoring.
-Scores are heuristic for the hackathon; optional jitter simulates live risk updates.
+SafeRoute API: Google Directions (alternatives) + geocoding + Places autocomplete + safety scoring.
+Scores are heuristic for the hackathon; reasons explain proxy signals (not live crime/lighting feeds).
 """
 
 from __future__ import annotations
@@ -8,19 +8,21 @@ from __future__ import annotations
 import hashlib
 import os
 import time
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import polyline
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 load_dotenv()
 
 GOOGLE_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+
+TravelMode = Literal["driving", "walking", "transit", "bicycling"]
 
 app = FastAPI(title="SafeRoute API", version="0.1.0")
 app.add_middleware(
@@ -38,12 +40,23 @@ class LatLng(BaseModel):
 
 
 class GeocodeRequest(BaseModel):
-    address: str = Field(..., min_length=1)
+    address: str | None = None
+    place_id: str | None = None
+
+    @model_validator(mode="after")
+    def require_address_or_place(self) -> "GeocodeRequest":
+        a = (self.address or "").strip()
+        p = (self.place_id or "").strip()
+        if not a and not p:
+            raise ValueError("Provide address or place_id")
+        return self
 
 
 class RoutesRequest(BaseModel):
     origin: LatLng
     destination: LatLng
+    travel_mode: TravelMode = "driving"
+    transit_prefer_bus: bool = False
 
 
 def _require_google_key() -> str:
@@ -59,15 +72,18 @@ def _stable_hash(s: str) -> int:
     return int(hashlib.sha256(s.encode("utf-8")).hexdigest()[:12], 16)
 
 
-def _safety_score(encoded_polyline: str, duration_s: float, distance_m: float) -> tuple[float, str]:
+def _evaluate_route_safety(
+    encoded_polyline: str,
+    duration_s: float,
+    distance_m: float,
+) -> dict[str, Any]:
     """
-    Heuristic 0–100 (higher = safer). Hackathon demo: blend stability from geometry
-    with small time-based jitter when re-scored for "real-time" feel.
+    Heuristic 0–100 (higher = safer) plus human-readable reasons tied to the same proxies.
     """
     h = _stable_hash(encoded_polyline)
-    base = 35 + (h % 45)  # 35–79 stable band per route shape
+    base = 35 + (h % 45)
 
-    # Slightly favor routes that are not extreme speed-vs-distance (proxy for highway-only dash).
+    km_h = 0.0
     if distance_m > 0:
         km_h = (distance_m / 1000) / max(duration_s / 3600, 1e-3)
         if km_h > 85:
@@ -75,7 +91,7 @@ def _safety_score(encoded_polyline: str, duration_s: float, distance_m: float) -
         elif km_h < 25:
             base += 4
 
-    jitter = (time.time() % 17) - 8  # ±8 live-ish swing on refresh
+    jitter = (time.time() % 17) - 8
     score = max(0, min(100, base + jitter))
 
     if score >= 67:
@@ -84,13 +100,72 @@ def _safety_score(encoded_polyline: str, duration_s: float, distance_m: float) -
         tier = "moderate"
     else:
         tier = "dangerous"
-    return score, tier
 
+    reasons: list[str] = []
 
-def _tier_color(tier: str) -> str:
-    return {"safe": "#22c55e", "moderate": "#eab308", "dangerous": "#ef4444"}.get(
-        tier, "#64748b"
+    if distance_m > 0:
+        if km_h > 80:
+            reasons.append(
+                "Higher average speeds along parts of this path — our demo model treats that as slightly higher exposure."
+            )
+        elif km_h < 30:
+            reasons.append(
+                "Slower-moving segments (walking-like speeds in the profile) rank a bit better in our demo comfort proxy."
+            )
+
+    # Deterministic “signals” from route fingerprint (clearly labeled as demo estimates).
+    lighting_idx = h % 4
+    lighting_msgs = [
+        "Night lighting coverage (demo estimate): fewer well-lit blocks along portions of this polyline.",
+        "Night lighting coverage (demo estimate): mixed lit and unlit segments.",
+        "Night lighting coverage (demo estimate): mostly average municipal lighting in the model.",
+        "Night lighting coverage (demo estimate): relatively more lit arterial segments in the model.",
+    ]
+    reasons.append(lighting_msgs[lighting_idx])
+
+    crowd_idx = (h // 7) % 3
+    crowd_msgs = [
+        "Pedestrian / roadside crowding proxy (demo): busier mixed-use stretches in the model.",
+        "Pedestrian / roadside crowding proxy (demo): moderate activity band.",
+        "Pedestrian / roadside crowding proxy (demo): quieter segments in the model.",
+    ]
+    reasons.append(crowd_msgs[crowd_idx])
+
+    incident_idx = (h // 13) % 3
+    incident_msgs = [
+        "Historical incident density layer: not connected — placeholder band only (no live police feed).",
+        "Historical incident density layer: not connected — placeholder band only (no live police feed).",
+        "Historical incident density layer: not connected — placeholder band only (no live police feed).",
+    ]
+    reasons.append(incident_msgs[incident_idx])
+
+    if tier == "dangerous":
+        reasons.append(
+            "Overall tier is lower because the blended demo score fell in the higher-risk band — not due to a verified active threat."
+        )
+    elif tier == "moderate":
+        reasons.append(
+            "Overall tier is mid-range: a mix of proxy factors; still verify the corridor yourself, especially at night."
+        )
+    else:
+        reasons.append(
+            "Overall tier is higher on our demo blend — still use normal caution; this is not a guarantee of safety."
+        )
+
+    disclaimer = (
+        "SafeRoute’s tiers combine geometry, speed/duration heuristics, and seeded demo signals. "
+        "We do not yet ingest live crime, outages, or verified street-lamp inventories."
     )
+
+    return {
+        "safety_score": round(score, 1),
+        "safety_tier": tier,
+        "color": {"safe": "#22c55e", "moderate": "#eab308", "dangerous": "#ef4444"}.get(
+            tier, "#64748b"
+        ),
+        "safety_reasons": reasons,
+        "safety_disclaimer": disclaimer,
+    }
 
 
 @app.get("/health")
@@ -98,11 +173,55 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/places/autocomplete")
+async def places_autocomplete(
+    q: str = Query("", alias="input", min_length=0),
+    sessiontoken: str | None = Query(None),
+) -> dict[str, Any]:
+    """Google Places Autocomplete (legacy) — enable Places API on the same server key."""
+    key = _require_google_key()
+    q = q.strip()
+    if len(q) < 2:
+        return {"predictions": []}
+
+    url = "https://maps.googleapis.com/maps/api/place/autocomplete/json"
+    params: dict[str, str] = {"input": q, "key": key}
+    if sessiontoken:
+        params["sessiontoken"] = sessiontoken
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(url, params=params)
+    data = r.json()
+    status = data.get("status")
+    if status not in ("OK", "ZERO_RESULTS"):
+        raise HTTPException(
+            status_code=400,
+            detail=data.get("error_message") or status or "Autocomplete failed",
+        )
+
+    preds = []
+    for p in data.get("predictions", [])[:10]:
+        preds.append(
+            {
+                "description": p.get("description"),
+                "place_id": p.get("place_id"),
+                "main_text": (p.get("structured_formatting") or {}).get("main_text"),
+                "secondary_text": (p.get("structured_formatting") or {}).get("secondary_text"),
+            }
+        )
+    return {"predictions": preds}
+
+
 @app.post("/api/geocode")
 async def geocode(body: GeocodeRequest) -> dict[str, Any]:
     key = _require_google_key()
     url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {"address": body.address, "key": key}
+    params: dict[str, str] = {"key": key}
+    if body.place_id and body.place_id.strip():
+        params["place_id"] = body.place_id.strip()
+    else:
+        params["address"] = (body.address or "").strip()
+
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url, params=params)
     data = r.json()
@@ -127,13 +246,20 @@ async def routes(body: RoutesRequest) -> dict[str, Any]:
     origin = f"{body.origin.lat},{body.origin.lng}"
     destination = f"{body.destination.lat},{body.destination.lng}"
     url = "https://maps.googleapis.com/maps/api/directions/json"
-    params = {
+    params: dict[str, str] = {
         "origin": origin,
         "destination": destination,
         "alternatives": "true",
+        "mode": body.travel_mode,
         "key": key,
     }
-    async with httpx.AsyncClient(timeout=45) as client:
+    if body.travel_mode == "transit" and body.transit_prefer_bus:
+        params["transit_mode"] = "bus"
+    if body.travel_mode == "transit":
+        # Helps Google return transit results instead of ZERO_RESULTS in many cities.
+        params["departure_time"] = str(int(time.time()))
+
+    async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(url, params=params)
     data = r.json()
     status = data.get("status")
@@ -155,7 +281,7 @@ async def routes(body: RoutesRequest) -> dict[str, Any]:
         duration_s = sum(l.get("duration", {}).get("value", 0) for l in legs)
         distance_m = sum(l.get("distance", {}).get("value", 0) for l in legs)
 
-        score, tier = _safety_score(enc, float(duration_s), float(distance_m))
+        ev = _evaluate_route_safety(enc, float(duration_s), float(distance_m))
         route_id = f"route-{idx}-{_stable_hash(enc) % 10_000}"
 
         out_routes.append(
@@ -164,24 +290,26 @@ async def routes(body: RoutesRequest) -> dict[str, Any]:
                 "summary": leg.get("summary") or f"Route {idx + 1}",
                 "duration_seconds": duration_s,
                 "distance_meters": distance_m,
-                "safety_score": round(score, 1),
-                "safety_tier": tier,
-                "color": _tier_color(tier),
+                "safety_score": ev["safety_score"],
+                "safety_tier": ev["safety_tier"],
+                "color": ev["color"],
+                "safety_reasons": ev["safety_reasons"],
+                "safety_disclaimer": ev["safety_disclaimer"],
                 "geometry": {"type": "LineString", "coordinates": geo_coords},
             }
         )
 
-    # Prefer safer routes first in the list (still show all on map).
     out_routes.sort(key=lambda x: x["safety_score"], reverse=True)
 
-    return {"routes": out_routes, "updated_at": time.time()}
+    return {
+        "routes": out_routes,
+        "updated_at": time.time(),
+        "travel_mode": body.travel_mode,
+    }
 
 
 @app.post("/api/routes/{route_id}/safety")
 async def route_safety_refresh(route_id: str, body: RoutesRequest) -> dict[str, Any]:
-    """
-    Recompute safety for a single route after selection (same Directions call, pick matching id).
-    """
     bundle = await routes(body)
     for rt in bundle["routes"]:
         if rt["id"] == route_id:
@@ -190,6 +318,8 @@ async def route_safety_refresh(route_id: str, body: RoutesRequest) -> dict[str, 
                 "safety_score": rt["safety_score"],
                 "safety_tier": rt["safety_tier"],
                 "color": rt["color"],
+                "safety_reasons": rt["safety_reasons"],
+                "safety_disclaimer": rt["safety_disclaimer"],
                 "updated_at": time.time(),
             }
     raise HTTPException(status_code=404, detail="Route not found")

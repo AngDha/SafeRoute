@@ -1,3 +1,6 @@
+import { geocodeResolve } from "@/lib/api";
+import type { LatLng } from "@/types/route";
+
 function parseLatLng(input: string): { lat: number; lng: number } | null {
   const s = input.trim();
   const m = s.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
@@ -9,12 +12,21 @@ function parseLatLng(input: string): { lat: number; lng: number } | null {
   return { lat, lng };
 }
 
-export async function resolveToLatLng(
+/**
+ * Resolve a search box to coordinates: explicit coords, geocoded place_id, or geocoded free text.
+ */
+export async function resolveSearchToLatLng(
   raw: string,
-  geocode: (address: string) => Promise<{ location: { lat: number; lng: number } }>,
-): Promise<{ lat: number; lng: number }> {
+  placeId: string | null,
+  coordsOverride: LatLng | null,
+): Promise<LatLng> {
+  if (coordsOverride) return coordsOverride;
+  if (placeId) {
+    const res = await geocodeResolve({ place_id: placeId });
+    return res.location;
+  }
   const direct = parseLatLng(raw);
   if (direct) return direct;
-  const res = await geocode(raw);
+  const res = await geocodeResolve({ address: raw.trim() });
   return res.location;
 }

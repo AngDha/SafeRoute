@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import PlaceSearchInput from "@/components/PlaceSearchInput";
 import RouteMap from "@/components/RouteMap";
-import { fetchRoutes, geocodeAddress, refreshRouteSafety } from "@/lib/api";
-import { resolveToLatLng } from "@/lib/geo";
-import type { LatLng, RouteLeg } from "@/types/route";
+import { fetchRoutes, refreshRouteSafety } from "@/lib/api";
+import { resolveSearchToLatLng } from "@/lib/geo";
+import type { LatLng, RouteLeg, TravelMode } from "@/types/route";
 
 function formatDuration(seconds: number): string {
   const m = Math.round(seconds / 60);
@@ -28,26 +29,34 @@ function tierLabel(tier: RouteLeg["safety_tier"]): string {
 export default function HomeClient() {
   const [startInput, setStartInput] = useState("Union Station, Toronto");
   const [endInput, setEndInput] = useState("CN Tower, Toronto");
+  const [startPlaceId, setStartPlaceId] = useState<string | null>(null);
+  const [endPlaceId, setEndPlaceId] = useState<string | null>(null);
+  const [startCoords, setStartCoords] = useState<LatLng | null>(null);
+  const [endCoords, setEndCoords] = useState<LatLng | null>(null);
   const [origin, setOrigin] = useState<LatLng | null>(null);
   const [destination, setDestination] = useState<LatLng | null>(null);
   const [routes, setRoutes] = useState<RouteLeg[]>([]);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [geoHint, setGeoHint] = useState<string | null>(null);
+  const [travelMode, setTravelMode] = useState<TravelMode>("driving");
+  const [transitPreferBus, setTransitPreferBus] = useState(false);
 
   const planRoutes = useCallback(async () => {
     setError(null);
+    setGeoHint(null);
     setLoading(true);
     setSelectedRouteId(null);
     try {
-      const o = await resolveToLatLng(startInput, geocodeAddress);
-      const d = await resolveToLatLng(endInput, geocodeAddress);
+      const o = await resolveSearchToLatLng(startInput, startPlaceId, startCoords);
+      const d = await resolveSearchToLatLng(endInput, endPlaceId, endCoords);
       setOrigin(o);
       setDestination(d);
-      const data = await fetchRoutes(o, d);
+      const data = await fetchRoutes(o, d, travelMode, transitPreferBus);
       setRoutes(data.routes);
       if (!data.routes.length) {
-        setError("No routes returned. Try nearby addresses or coordinates.");
+        setError("No routes returned. Try another mode, nearby places, or coordinates.");
       }
     } catch (e) {
       setRoutes([]);
@@ -57,13 +66,19 @@ export default function HomeClient() {
     } finally {
       setLoading(false);
     }
-  }, [startInput, endInput]);
+  }, [startInput, endInput, startPlaceId, endPlaceId, startCoords, endCoords, travelMode, transitPreferBus]);
 
   useEffect(() => {
     if (!selectedRouteId || !origin || !destination) return;
     const id = window.setInterval(async () => {
       try {
-        const snap = await refreshRouteSafety(selectedRouteId, origin, destination);
+        const snap = await refreshRouteSafety(
+          selectedRouteId,
+          origin,
+          destination,
+          travelMode,
+          transitPreferBus,
+        );
         setRoutes((prev) =>
           prev.map((r) =>
             r.id === snap.id
@@ -72,16 +87,58 @@ export default function HomeClient() {
                   safety_score: snap.safety_score,
                   safety_tier: snap.safety_tier,
                   color: snap.color,
+                  safety_reasons: snap.safety_reasons,
+                  safety_disclaimer: snap.safety_disclaimer,
                 }
               : r,
           ),
         );
       } catch {
-        /* ignore transient refresh errors */
+        /* ignore */
       }
     }, 8000);
     return () => window.clearInterval(id);
-  }, [selectedRouteId, origin, destination]);
+  }, [selectedRouteId, origin, destination, travelMode, transitPreferBus]);
+
+  const useMyLocationStart = () => {
+    setGeoHint(null);
+    if (!navigator.geolocation) {
+      setGeoHint("This browser does not support location.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setStartCoords({ lat: latitude, lng: longitude });
+        setStartPlaceId(null);
+        setStartInput("Current location");
+      },
+      () => {
+        setGeoHint("Could not read your location (permission denied or unavailable).");
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 },
+    );
+  };
+
+  const useMyLocationEnd = () => {
+    setGeoHint(null);
+    if (!navigator.geolocation) {
+      setGeoHint("This browser does not support location.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setEndCoords({ lat: latitude, lng: longitude });
+        setEndPlaceId(null);
+        setEndInput("Current location");
+      },
+      () => {
+        setGeoHint("Could not read your location (permission denied or unavailable).");
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 },
+    );
+  };
 
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col md:flex-row">
@@ -93,33 +150,95 @@ export default function HomeClient() {
 
         <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
           <div className="space-y-2">
-            <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500" htmlFor="sr-start">
               Starting point
             </label>
-            <div className="flex gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-within:border-emerald-400 focus-within:ring-1 focus-within:ring-emerald-400">
-              <span className="pt-1 text-sm font-bold text-emerald-600">A</span>
-              <input
-                className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                value={startInput}
-                onChange={(e) => setStartInput(e.target.value)}
-                placeholder="Address or lat,lng"
-              />
+            <div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <PlaceSearchInput
+                  id="sr-start"
+                  letter="A"
+                  accent="emerald"
+                  value={startInput}
+                  onChangeValue={(v) => {
+                    setStartInput(v);
+                    setStartCoords(null);
+                  }}
+                  placeId={startPlaceId}
+                  onPlaceIdChange={setStartPlaceId}
+                  placeholder="Search or lat,lng"
+                />
+              </div>
+              <button
+                type="button"
+                title="Use your current location as start"
+                onClick={useMyLocationStart}
+                className="shrink-0 self-start rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                Here
+              </button>
             </div>
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500" htmlFor="sr-end">
               Destination
             </label>
-            <div className="flex gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-within:border-rose-400 focus-within:ring-1 focus-within:ring-rose-400">
-              <span className="pt-1 text-sm font-bold text-rose-600">B</span>
-              <input
-                className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                value={endInput}
-                onChange={(e) => setEndInput(e.target.value)}
-                placeholder="Address or lat,lng"
-              />
+            <div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <PlaceSearchInput
+                  id="sr-end"
+                  letter="B"
+                  accent="rose"
+                  value={endInput}
+                  onChangeValue={(v) => {
+                    setEndInput(v);
+                    setEndCoords(null);
+                  }}
+                  placeId={endPlaceId}
+                  onPlaceIdChange={setEndPlaceId}
+                  placeholder="Search or lat,lng"
+                />
+              </div>
+              <button
+                type="button"
+                title="Use your current location as destination"
+                onClick={useMyLocationEnd}
+                className="shrink-0 self-start rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                Here
+              </button>
             </div>
+          </div>
+
+          {geoHint ? <p className="text-xs text-amber-800">{geoHint}</p> : null}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500" htmlFor="sr-mode">
+              Travel mode
+            </label>
+            <select
+              id="sr-mode"
+              value={travelMode}
+              onChange={(e) => setTravelMode(e.target.value as TravelMode)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400"
+            >
+              <option value="driving">Driving</option>
+              <option value="walking">Walking</option>
+              <option value="transit">Transit (bus &amp; rail)</option>
+              <option value="bicycling">Cycling</option>
+            </select>
+            {travelMode === "transit" ? (
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={transitPreferBus}
+                  onChange={(e) => setTransitPreferBus(e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                Prefer bus segments when possible
+              </label>
+            ) : null}
           </div>
 
           <button
@@ -132,9 +251,7 @@ export default function HomeClient() {
           </button>
 
           {error ? (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-              {error}
-            </div>
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">{error}</div>
           ) : null}
 
           {routes.length > 0 ? (
@@ -180,6 +297,24 @@ export default function HomeClient() {
                                 Safety {r.safety_score.toFixed(0)} — {tierLabel(r.safety_tier)}
                               </span>
                             </div>
+                            <details
+                              className={`mt-2 text-left text-[11px] ${active ? "text-slate-200" : "text-slate-600"}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <summary
+                                className={`cursor-pointer font-semibold ${active ? "text-slate-100" : "text-slate-700"}`}
+                              >
+                                Why this rating?
+                              </summary>
+                              <ul className="mt-1.5 list-disc space-y-1 pl-4 leading-snug">
+                                {(r.safety_reasons ?? []).map((line, i) => (
+                                  <li key={i}>{line}</li>
+                                ))}
+                              </ul>
+                              <p className={`mt-2 text-[10px] leading-snug ${active ? "text-slate-300" : "text-slate-500"}`}>
+                                {r.safety_disclaimer}
+                              </p>
+                            </details>
                           </div>
                         </div>
                       </button>
