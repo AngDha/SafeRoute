@@ -84,8 +84,8 @@ export default function HomeClient() {
   }, [selectedRouteId, origin, destination]);
 
   return (
-    <div className="flex h-[100dvh] flex-col md:flex-row">
-      <aside className="z-10 flex w-full shrink-0 flex-col border-b border-slate-200 bg-white shadow-sm md:w-[400px] md:border-b-0 md:border-r">
+    <div className="flex h-[100dvh] min-h-0 flex-col md:flex-row">
+      <aside className="z-10 flex w-full shrink-0 flex-col border-b border-slate-200 bg-white shadow-sm md:h-full md:w-[400px] md:min-h-0 md:border-b-0 md:border-r">
         <div className="border-b border-slate-100 px-4 py-3">
           <h1 className="text-lg font-semibold tracking-tight text-slate-900">SafeRoute</h1>
           <p className="text-xs text-slate-500">Safer paths, not just faster ones.</p>
@@ -213,13 +213,15 @@ export default function HomeClient() {
         </div>
       </aside>
 
-      <main className="relative min-h-[50vh] flex-1 bg-slate-100 md:min-h-0">
-        <RouteMap
-          origin={origin}
-          destination={destination}
-          routes={routes}
-          selectedRouteId={selectedRouteId}
-        />
+      <main className="relative flex min-h-[45vh] flex-1 flex-col bg-slate-100 md:min-h-0 md:overflow-hidden">
+        <div className="relative min-h-0 flex-1 md:absolute md:inset-0">
+          <RouteMap
+            origin={origin}
+            destination={destination}
+            routes={routes}
+            selectedRouteId={selectedRouteId}
+          />
+        </div>
       </main>
     </div>
   );

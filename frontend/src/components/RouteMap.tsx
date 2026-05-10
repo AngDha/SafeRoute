@@ -57,6 +57,7 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId 
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
   const markersRef = useRef<{ o?: mapboxgl.Marker; d?: mapboxgl.Marker }>({});
 
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -64,16 +65,51 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId 
   useEffect(() => {
     if (!token || !containerRef.current) return;
 
+    setMapError(null);
     mapboxgl.accessToken = token;
+    const container = containerRef.current;
     const map = new mapboxgl.Map({
-      container: containerRef.current,
+      container,
       style: "mapbox://styles/mapbox/streets-v12",
       center: [-79.3832, 43.6532],
       zoom: 11,
+      attributionControl: true,
     });
     mapRef.current = map;
 
+    const resizeMap = () => {
+      try {
+        map.resize();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const onMapError = (e: { error?: Error }) => {
+      const msg = e.error?.message ?? "Map failed to load tiles or style.";
+      setMapError(msg);
+      console.error("[SafeRoute map]", e.error ?? e);
+    };
+
+    map.on("error", onMapError);
+
+    const rafResize = () => {
+      requestAnimationFrame(() => {
+        resizeMap();
+        requestAnimationFrame(resizeMap);
+      });
+    };
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => rafResize());
+      resizeObserver.observe(container);
+    }
+
+    window.addEventListener("resize", resizeMap);
+
     map.on("load", () => {
+      rafResize();
       map.addSource(ROUTES_SOURCE, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -107,15 +143,22 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId 
         ROUTES_LAYER,
       );
       setMapLoaded(true);
+      rafResize();
     });
 
+    rafResize();
+
     return () => {
+      window.removeEventListener("resize", resizeMap);
+      resizeObserver?.disconnect();
+      map.off("error", onMapError);
       markersRef.current.o?.remove();
       markersRef.current.d?.remove();
       markersRef.current = {};
       map.remove();
       mapRef.current = null;
       setMapLoaded(false);
+      setMapError(null);
     };
   }, [token]);
 
@@ -215,5 +258,20 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId 
     );
   }
 
-  return <div ref={containerRef} className="h-full w-full min-h-[320px]" />;
+  return (
+    <div className="relative h-full min-h-[280px] w-full flex-1 md:min-h-0">
+      {mapError ? (
+        <div className="absolute left-2 right-2 top-2 z-10 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 shadow-sm">
+          <div className="font-semibold">Map could not load tiles</div>
+          <p className="mt-1 leading-snug">
+            {mapError} — If you use a restricted Mapbox token, add{" "}
+            <code className="rounded bg-red-100 px-1">http://localhost:3000</code> (and{" "}
+            <code className="rounded bg-red-100 px-1">http://127.0.0.1:3000</code>) under URL
+            restrictions, then restart <code className="rounded bg-red-100 px-1">npm run dev</code>.
+          </p>
+        </div>
+      ) : null}
+      <div ref={containerRef} className="h-full w-full min-h-[280px] md:min-h-0" />
+    </div>
+  );
 }
